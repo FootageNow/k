@@ -16,7 +16,7 @@ DATA_FILE = "data.json"
 # ================== Data ==================
 def load_data():
     if not os.path.exists(DATA_FILE):
-        return {"teams": {}, "points": {}}
+        return {"teams": {}, "points": {}, "join_requests": {}}
     with open(DATA_FILE, "r") as f:
         return json.load(f)
 
@@ -122,10 +122,26 @@ async def team_accept(interaction: discord.Interaction, member: discord.Member):
         )
 
     team_name = data["teams"][uid]["team"]
-    role = discord.utils.get(interaction.guild.roles, name=team_name)
 
+    # التحقق من وجود طلب الانضمام
+    if team_name not in data["join_requests"]:
+        return await interaction.response.send_message(
+            "❌ لا يوجد طلبات انضمام لهذا الفريق", ephemeral=True
+        )
+    if member.id not in data["join_requests"][team_name]:
+        return await interaction.response.send_message(
+            "❌ هذا العضو لم يرسل طلب الانضمام", ephemeral=True
+        )
+
+    # إضافة الرول للعضو
+    role = discord.utils.get(interaction.guild.roles, name=team_name)
     await member.add_roles(role)
+
+    # إضافة العضو لقائمة أعضاء الفريق
     data["teams"][uid]["members"].append(member.id)
+
+    # إزالة العضو من قائمة الانتظار
+    data["join_requests"][team_name].remove(member.id)
     save_data(data)
 
     await interaction.response.send_message(
@@ -151,6 +167,19 @@ async def remove_team(interaction: discord.Interaction, member: discord.Member):
 # ================== ALL USERS ==================
 @bot.tree.command(name="team-join", description="طلب الانضمام لفريق")
 async def team_join(interaction: discord.Interaction, team_name: str):
+    if "join_requests" not in data:
+        data["join_requests"] = {}
+    if team_name not in data["join_requests"]:
+        data["join_requests"][team_name] = []
+
+    if interaction.user.id in data["join_requests"][team_name]:
+        return await interaction.response.send_message(
+            "❌ لقد قدمت طلب لهذا الفريق مسبقًا", ephemeral=True
+        )
+
+    data["join_requests"][team_name].append(interaction.user.id)
+    save_data(data)
+
     await interaction.response.send_message(
         f"📩 تم إرسال طلب الانضمام إلى فريق **{team_name}**",
         ephemeral=True
