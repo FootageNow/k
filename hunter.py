@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 import os
 import json
@@ -37,29 +37,25 @@ async def get_or_create_role(guild, name):
     return role
 
 async def update_leaderboard():
+    """تحديث الرسالة تلقائيًا"""
     if not data.get("leaderboard_channel") or not data.get("leaderboard_msg_id"):
         return
-
     channel = bot.get_channel(data["leaderboard_channel"])
     if not channel:
         return
-
     try:
         msg = await channel.fetch_message(data["leaderboard_msg_id"])
+        leaderboard = sorted(data["points"].items(), key=lambda x: x[1], reverse=True)[:10]
+        msg_content = "**🏆 Top 10 Players 🏆**\n"
+        for i, (uid, pts) in enumerate(leaderboard, start=1):
+            try:
+                user = await bot.fetch_user(int(uid))
+                msg_content += f"{i}. {user.name} - {pts} نقاط\n"
+            except:
+                msg_content += f"{i}. Unknown - {pts} نقاط\n"
+        await msg.edit(content=msg_content)
     except:
-        return
-
-    leaderboard = sorted(data["points"].items(), key=lambda x: x[1], reverse=True)[:10]
-
-    msg_content = "**🏆 Top 10 Players 🏆**\n"
-    for i, (uid, pts) in enumerate(leaderboard, start=1):
-        try:
-            user = await bot.fetch_user(int(uid))
-            msg_content += f"{i}. {user.name} - {pts} نقاط\n"
-        except:
-            msg_content += f"{i}. Unknown - {pts} نقاط\n"
-
-    await msg.edit(content=msg_content)
+        pass
 
 # ================== Events ==================
 @bot.event
@@ -90,19 +86,18 @@ async def give_points(interaction: discord.Interaction, member: discord.Member, 
     data["points"][uid] = data["points"].get(uid, 0) + points
     save_data(data)
     await interaction.response.send_message(f"⭐ {member.mention} حصل على {points} نقاط", ephemeral=True)
-
-    # تحديث leaderboard بعد أي تغيير
+    # تحديث leaderboard تلقائيًا
     await update_leaderboard()
 
 @bot.tree.command(name="points-leaderboard", description="إنشاء رسالة Top 10 أو تحديثها")
 @app_commands.checks.has_any_role("Mod", "HEAD MOD")
 async def points_leaderboard(interaction: discord.Interaction):
-    # إذا الرسالة موجودة بالفعل → تحدثها
+    # إذا الرسالة موجودة بالفعل → تحدثها مباشرة
     if data.get("leaderboard_channel") and data.get("leaderboard_msg_id"):
         await update_leaderboard()
         return await interaction.response.send_message("✅ تم تحديث leaderboard", ephemeral=True)
 
-    # إذا لم توجد → إنشاء رسالة جديدة في نفس القناة
+    # إنشاء رسالة جديدة
     leaderboard = sorted(data["points"].items(), key=lambda x: x[1], reverse=True)[:10]
     msg_content = "**🏆 Top 10 Players 🏆**\n"
     for i, (uid, pts) in enumerate(leaderboard, start=1):
@@ -123,14 +118,11 @@ async def points_leaderboard(interaction: discord.Interaction):
 async def create_team(interaction: discord.Interaction, team_name: str):
     if not has_role(interaction.user, "TEAM-LEADER"):
         return await interaction.response.send_message("❌ هذا الأمر خاص بـ TEAM-LEADER", ephemeral=True)
-
     uid = str(interaction.user.id)
     if uid in data["teams"]:
         return await interaction.response.send_message("❌ أنشأت فريق مسبقًا", ephemeral=True)
-
     role = await get_or_create_role(interaction.guild, team_name)
     await interaction.user.add_roles(role)
-
     data["teams"][uid] = {"team": team_name, "members": []}
     save_data(data)
     await interaction.response.send_message(f"🏆 تم إنشاء فريق **{team_name}**", ephemeral=True)
@@ -140,12 +132,10 @@ async def team_accept(interaction: discord.Interaction, member: discord.Member):
     uid = str(interaction.user.id)
     if uid not in data["teams"]:
         return await interaction.response.send_message("❌ أنت لست قائد فريق", ephemeral=True)
-
     team_name = data["teams"][uid]["team"]
     member_id = str(member.id)
     if team_name not in data["join_requests"] or member_id not in data["join_requests"][team_name]:
         return await interaction.response.send_message("❌ هذا العضو لم يرسل طلب الانضمام", ephemeral=True)
-
     role = discord.utils.get(interaction.guild.roles, name=team_name)
     await member.add_roles(role)
     data["teams"][uid]["members"].append(member.id)
@@ -158,7 +148,6 @@ async def remove_team(interaction: discord.Interaction, member: discord.Member):
     uid = str(interaction.user.id)
     if uid not in data["teams"]:
         return await interaction.response.send_message("❌ أنت لست قائد فريق", ephemeral=True)
-
     team_name = data["teams"][uid]["team"]
     role = discord.utils.get(interaction.guild.roles, name=team_name)
     await member.remove_roles(role)
@@ -171,21 +160,17 @@ async def team_join(interaction: discord.Interaction, team_name: str):
         data["join_requests"] = {}
     if team_name not in data["join_requests"]:
         data["join_requests"][team_name] = []
-
     user_id = str(interaction.user.id)
     if user_id in data["join_requests"][team_name]:
         return await interaction.response.send_message("❌ لقد قدمت طلب لهذا الفريق مسبقًا", ephemeral=True)
-
     data["join_requests"][team_name].append(user_id)
     save_data(data)
-
     # إشعار القائد
     leader_id = None
     for uid, team_info in data["teams"].items():
         if team_info["team"].lower() == team_name.lower():
             leader_id = int(uid)
             break
-
     if leader_id:
         leader = interaction.guild.get_member(leader_id)
         if leader:
@@ -195,7 +180,6 @@ async def team_join(interaction: discord.Interaction, team_name: str):
                 await interaction.guild.text_channels[0].send(
                     f"📩 {interaction.user.mention} طلب الانضمام إلى فريق **{team_name}**. القائد {leader.mention}"
                 )
-
     await interaction.response.send_message(f"✅ تم إرسال طلب الانضمام إلى فريق **{team_name}**", ephemeral=True)
 
 # ================== RUN ==================
