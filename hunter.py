@@ -128,7 +128,9 @@ async def team_accept(interaction: discord.Interaction, member: discord.Member):
         return await interaction.response.send_message(
             "❌ لا يوجد طلبات انضمام لهذا الفريق", ephemeral=True
         )
-    if member.id not in data["join_requests"][team_name]:
+
+    member_id = str(member.id)
+    if member_id not in data["join_requests"][team_name]:
         return await interaction.response.send_message(
             "❌ هذا العضو لم يرسل طلب الانضمام", ephemeral=True
         )
@@ -141,7 +143,7 @@ async def team_accept(interaction: discord.Interaction, member: discord.Member):
     data["teams"][uid]["members"].append(member.id)
 
     # إزالة العضو من قائمة الانتظار
-    data["join_requests"][team_name].remove(member.id)
+    data["join_requests"][team_name].remove(member_id)
     save_data(data)
 
     await interaction.response.send_message(
@@ -172,13 +174,15 @@ async def team_join(interaction: discord.Interaction, team_name: str):
     if team_name not in data["join_requests"]:
         data["join_requests"][team_name] = []
 
-    if interaction.user.id in data["join_requests"][team_name]:
+    user_id = str(interaction.user.id)
+
+    if user_id in data["join_requests"][team_name]:
         return await interaction.response.send_message(
             "❌ لقد قدمت طلب لهذا الفريق مسبقًا", ephemeral=True
         )
 
     # إضافة العضو لطلبات الانضمام
-    data["join_requests"][team_name].append(interaction.user.id)
+    data["join_requests"][team_name].append(user_id)
     save_data(data)
 
     # العثور على قائد الفريق
@@ -197,7 +201,6 @@ async def team_join(interaction: discord.Interaction, team_name: str):
                     f"📩 العضو {interaction.user.mention} طلب الانضمام إلى فريقك: **{team_name}**"
                 )
             except:
-                # إذا لم يستطع البوت إرسال DM
                 await interaction.guild.text_channels[0].send(
                     f"📩 {interaction.user.mention} طلب الانضمام إلى فريق **{team_name}**. القائد {leader.mention}"
                 )
