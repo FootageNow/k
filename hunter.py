@@ -177,12 +177,33 @@ async def team_join(interaction: discord.Interaction, team_name: str):
             "❌ لقد قدمت طلب لهذا الفريق مسبقًا", ephemeral=True
         )
 
+    # إضافة العضو لطلبات الانضمام
     data["join_requests"][team_name].append(interaction.user.id)
     save_data(data)
 
+    # العثور على قائد الفريق
+    leader_id = None
+    for uid, team_info in data["teams"].items():
+        if team_info["team"].lower() == team_name.lower():
+            leader_id = int(uid)
+            break
+
+    # إرسال إشعار للقائد
+    if leader_id:
+        leader = interaction.guild.get_member(leader_id)
+        if leader:
+            try:
+                await leader.send(
+                    f"📩 العضو {interaction.user.mention} طلب الانضمام إلى فريقك: **{team_name}**"
+                )
+            except:
+                # إذا لم يستطع البوت إرسال DM
+                await interaction.guild.text_channels[0].send(
+                    f"📩 {interaction.user.mention} طلب الانضمام إلى فريق **{team_name}**. القائد {leader.mention}"
+                )
+
     await interaction.response.send_message(
-        f"📩 تم إرسال طلب الانضمام إلى فريق **{team_name}**",
-        ephemeral=True
+        f"✅ تم إرسال طلب الانضمام إلى فريق **{team_name}**", ephemeral=True
     )
 
 # ================== RUN ==================
