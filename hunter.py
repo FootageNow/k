@@ -1,16 +1,19 @@
 import discord
 from discord.ext import commands
+from discord import app_commands
 import os
 import json
 
 TOKEN = os.getenv("TOKEN")
 
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="/", intents=intents)
+intents = discord.Intents.default()
+intents.members = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 DATA_FILE = "data.json"
 
-# تحميل / حفظ البيانات
+# ================== Data ==================
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {"teams": {}, "points": {}}
@@ -23,7 +26,7 @@ def save_data(data):
 
 data = load_data()
 
-# ====== أدوات مساعدة ======
+# ================== Helpers ==================
 def has_role(member, role_name):
     return any(role.name == role_name for role in member.roles)
 
@@ -33,99 +36,125 @@ async def get_or_create_role(guild, name):
         role = await guild.create_role(name=name)
     return role
 
-# ====== أحداث ======
+# ================== Events ==================
 @bot.event
 async def on_ready():
-    print(f"🤖 Logged in as {bot.user}")
+    await bot.tree.sync()
+    print(f"✅ Bot Ready | {bot.user}")
 
-# ====== أوامر MOD + HEAD MOD ======
-@bot.command()
-@commands.has_any_role("Mod", "HEAD MOD")
-async def team_leader(ctx, member: discord.Member):
-    role = await get_or_create_role(ctx.guild, "TEAM-LEADER")
+# ================== MOD + HEAD MOD ==================
+@bot.tree.command(name="team-leader", description="إعطاء رول TEAM-LEADER")
+@app_commands.checks.has_any_role("Mod", "HEAD MOD")
+async def team_leader(interaction: discord.Interaction, member: discord.Member):
+    role = await get_or_create_role(interaction.guild, "TEAM-LEADER")
     await member.add_roles(role)
-    await ctx.send(f"✅ {member.mention} أصبح TEAM-LEADER")
+    await interaction.response.send_message(
+        f"✅ {member.mention} أصبح TEAM-LEADER", ephemeral=True
+    )
 
-@bot.command()
-@commands.has_any_role("Mod", "HEAD MOD")
-async def remove_leader(ctx, member: discord.Member):
-    role = discord.utils.get(ctx.guild.roles, name="TEAM-LEADER")
+@bot.tree.command(name="remove-leader", description="إزالة رول TEAM-LEADER")
+@app_commands.checks.has_any_role("Mod", "HEAD MOD")
+async def remove_leader(interaction: discord.Interaction, member: discord.Member):
+    role = discord.utils.get(interaction.guild.roles, name="TEAM-LEADER")
     if role:
         await member.remove_roles(role)
-    await ctx.send(f"❌ تم إزالة TEAM-LEADER من {member.mention}")
+    await interaction.response.send_message(
+        f"❌ تم إزالة TEAM-LEADER من {member.mention}", ephemeral=True
+    )
 
-@bot.command()
-@commands.has_any_role("Mod", "HEAD MOD")
-async def give_points(ctx, member: discord.Member, points: int):
-    user_id = str(member.id)
-    data["points"][user_id] = data["points"].get(user_id, 0) + points
+@bot.tree.command(name="give-points", description="إعطاء نقاط للاعب")
+@app_commands.checks.has_any_role("Mod", "HEAD MOD")
+async def give_points(interaction: discord.Interaction, member: discord.Member, points: int):
+    uid = str(member.id)
+    data["points"][uid] = data["points"].get(uid, 0) + points
     save_data(data)
-    await ctx.send(f"⭐ {member.mention} حصل على {points} نقاط")
+    await interaction.response.send_message(
+        f"⭐ {member.mention} حصل على {points} نقاط", ephemeral=True
+    )
 
-# ====== أوامر TEAM-LEADER ======
-@bot.command()
-async def create_team(ctx, team_name: str):
-    if not has_role(ctx.author, "TEAM-LEADER"):
-        return await ctx.send("❌ هذا الأمر خاص بـ TEAM-LEADER")
+@bot.tree.command(name="points-leaderboard", description="أفضل 10 لاعبين نقاط")
+@app_commands.checks.has_any_role("Mod", "HEAD MOD")
+async def points_leaderboard(interaction: discord.Interaction):
+    leaderboard = sorted(
+        data["points"].items(), key=lambda x: x[1], reverse=True
+    )[:10]
 
-    user_id = str(ctx.author.id)
-    if user_id in data["teams"]:
-        return await ctx.send("❌ لا يمكنك إنشاء أكثر من فريق")
+    msg = "🏆 **Top 10 Players** 🏆\n"
+    for i, (uid, pts) in enumerate(leaderboard, start=1):
+        user = await bot.fetch_user(int(uid))
+        msg += f"{i}. {user.name} - {pts} نقاط\n"
 
-    role = await get_or_create_role(ctx.guild, team_name)
-    await ctx.author.add_roles(role)
+    await interaction.response.send_message(msg)
 
-    data["teams"][user_id] = {
+# ================== TEAM LEADER ==================
+@bot.tree.command(name="create-team", description="إنشاء فريق (مرة واحدة)")
+async def create_team(interaction: discord.Interaction, team_name: str):
+    if not has_role(interaction.user, "TEAM-LEADER"):
+        return await interaction.response.send_message(
+            "❌ هذا الأمر خاص بـ TEAM-LEADER", ephemeral=True
+        )
+
+    uid = str(interaction.user.id)
+    if uid in data["teams"]:
+        return await interaction.response.send_message(
+            "❌ أنشأت فريق مسبقًا", ephemeral=True
+        )
+
+    role = await get_or_create_role(interaction.guild, team_name)
+    await interaction.user.add_roles(role)
+
+    data["teams"][uid] = {
         "team": team_name,
         "members": []
     }
     save_data(data)
 
-    await ctx.send(f"🏆 تم إنشاء فريق **{team_name}**")
+    await interaction.response.send_message(
+        f"🏆 تم إنشاء فريق **{team_name}**", ephemeral=True
+    )
 
-@bot.command()
-async def team_accept(ctx, member: discord.Member):
-    user_id = str(ctx.author.id)
-    if user_id not in data["teams"]:
-        return await ctx.send("❌ أنت لست قائد فريق")
+@bot.tree.command(name="team-accept", description="قبول لاعب في الفريق")
+async def team_accept(interaction: discord.Interaction, member: discord.Member):
+    uid = str(interaction.user.id)
+    if uid not in data["teams"]:
+        return await interaction.response.send_message(
+            "❌ أنت لست قائد فريق", ephemeral=True
+        )
 
-    team_name = data["teams"][user_id]["team"]
-    role = discord.utils.get(ctx.guild.roles, name=team_name)
+    team_name = data["teams"][uid]["team"]
+    role = discord.utils.get(interaction.guild.roles, name=team_name)
 
     await member.add_roles(role)
-    data["teams"][user_id]["members"].append(member.id)
+    data["teams"][uid]["members"].append(member.id)
     save_data(data)
 
-    await ctx.send(f"✅ تم قبول {member.mention} في فريق {team_name}")
+    await interaction.response.send_message(
+        f"✅ تم قبول {member.mention} في فريق {team_name}", ephemeral=True
+    )
 
-@bot.command()
-async def remove_team(ctx, member: discord.Member):
-    user_id = str(ctx.author.id)
-    if user_id not in data["teams"]:
-        return await ctx.send("❌ أنت لست قائد فريق")
+@bot.tree.command(name="remove-team", description="إزالة لاعب من الفريق")
+async def remove_team(interaction: discord.Interaction, member: discord.Member):
+    uid = str(interaction.user.id)
+    if uid not in data["teams"]:
+        return await interaction.response.send_message(
+            "❌ أنت لست قائد فريق", ephemeral=True
+        )
 
-    team_name = data["teams"][user_id]["team"]
-    role = discord.utils.get(ctx.guild.roles, name=team_name)
-
+    team_name = data["teams"][uid]["team"]
+    role = discord.utils.get(interaction.guild.roles, name=team_name)
     await member.remove_roles(role)
-    await ctx.send(f"❌ تم إزالة {member.mention} من الفريق")
 
-# ====== أوامر عامة ======
-@bot.command()
-async def team_join(ctx, team_name: str):
-    await ctx.send(f"📩 تم إرسال طلب الانضمام إلى فريق **{team_name}**")
+    await interaction.response.send_message(
+        f"❌ تم إزالة {member.mention} من الفريق", ephemeral=True
+    )
 
-# ====== Leaderboard ======
-@bot.command()
-@commands.has_any_role("Mod", "HEAD MOD")
-async def points_leaderboard(ctx):
-    leaderboard = sorted(data["points"].items(), key=lambda x: x[1], reverse=True)[:10]
+# ================== ALL USERS ==================
+@bot.tree.command(name="team-join", description="طلب الانضمام لفريق")
+async def team_join(interaction: discord.Interaction, team_name: str):
+    await interaction.response.send_message(
+        f"📩 تم إرسال طلب الانضمام إلى فريق **{team_name}**",
+        ephemeral=True
+    )
 
-    msg = "🏆 **Top 10 Players** 🏆\n"
-    for i, (user_id, points) in enumerate(leaderboard, start=1):
-        user = await bot.fetch_user(int(user_id))
-        msg += f"{i}. {user.name} - {points} نقاط\n"
-
-    await ctx.send(msg)
-
+# ================== RUN ==================
 bot.run(TOKEN)
