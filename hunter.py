@@ -54,11 +54,8 @@ async def update_leaderboard():
         leaderboard = sorted(data["points"].items(), key=lambda x: x[1], reverse=True)[:10]
         content = "**🏆 Top 10 Players 🏆**\n"
         for i, (uid, pts) in enumerate(leaderboard, start=1):
-            try:
-                user = await bot.fetch_user(int(uid))
-                content += f"{i}. {user.name} - {pts} نقاط\n"
-            except:
-                content += f"{i}. Unknown - {pts} نقاط\n"
+            user = await bot.fetch_user(int(uid))
+            content += f"{i}. {user.name} - {pts} نقاط\n"
         await msg.edit(content=content)
     except:
         pass
@@ -100,11 +97,8 @@ async def points_leaderboard(interaction: discord.Interaction):
     leaderboard = sorted(data["points"].items(), key=lambda x: x[1], reverse=True)[:10]
     content = "**🏆 Top 10 Players 🏆**\n"
     for i, (uid, pts) in enumerate(leaderboard, start=1):
-        try:
-            user = await bot.fetch_user(int(uid))
-            content += f"{i}. {user.name} - {pts} نقاط\n"
-        except:
-            content += f"{i}. Unknown - {pts} نقاط\n"
+        user = await bot.fetch_user(int(uid))
+        content += f"{i}. {user.name} - {pts} نقاط\n"
     msg = await interaction.channel.send(content)
     data["leaderboard_channel"] = interaction.channel.id
     data["leaderboard_msg_id"] = msg.id
@@ -118,7 +112,7 @@ async def blacklist(interaction: discord.Interaction, member: discord.Member):
     guild = interaction.guild
     bl_role = await get_or_create_role(guild, "blacklist")
 
-    saved_roles = [role.id for role in member.roles if role != guild.default_role]
+    saved_roles = [r.id for r in member.roles if r != guild.default_role]
     data["blacklist_roles"][str(member.id)] = saved_roles
 
     for role in member.roles:
@@ -127,7 +121,6 @@ async def blacklist(interaction: discord.Interaction, member: discord.Member):
 
     await member.add_roles(bl_role)
     save_data(data)
-
     await interaction.response.send_message("⛔ تم بلاك ليست العضو", ephemeral=True)
 
 @bot.tree.command(name="unblacklist")
@@ -138,16 +131,14 @@ async def unblacklist(interaction: discord.Interaction, member: discord.Member):
     if bl_role:
         await member.remove_roles(bl_role)
 
-    saved = data["blacklist_roles"].get(str(member.id), [])
-    for role_id in saved:
+    for role_id in data["blacklist_roles"].get(str(member.id), []):
         role = guild.get_role(role_id)
         if role:
             await member.add_roles(role)
 
     data["blacklist_roles"].pop(str(member.id), None)
     save_data(data)
-
-    await interaction.response.send_message("✅ تم فك البلاك ليست وإرجاع الرولات", ephemeral=True)
+    await interaction.response.send_message("✅ تم فك البلاك ليست", ephemeral=True)
 
 # ================== TEAM SYSTEM ==================
 @bot.tree.command(name="create-team")
@@ -197,6 +188,63 @@ async def remove_team(interaction: discord.Interaction, member: discord.Member):
     if role:
         await member.remove_roles(role)
     await interaction.response.send_message("❌ تم إزالة العضو", ephemeral=True)
+
+# ================== TEAM CHANNELS ==================
+@bot.tree.command(name="team_channels")
+async def team_channels(interaction: discord.Interaction):
+    if not has_role(interaction.user, "TEAM-LEADER"):
+        return await interaction.response.send_message("❌ الأمر خاص بقائد الفريق فقط", ephemeral=True)
+
+    leader_id = str(interaction.user.id)
+    if leader_id not in data["teams"]:
+        return await interaction.response.send_message("❌ ليس لديك فريق", ephemeral=True)
+
+    team_name = data["teams"][leader_id]["team"]
+    guild = interaction.guild
+    team_role = discord.utils.get(guild.roles, name=team_name)
+    leader_role = discord.utils.get(guild.roles, name="TEAM-LEADER")
+
+    category = discord.utils.get(guild.categories, name="TEAMS")
+    if not category:
+        category = await guild.create_category("TEAMS")
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        team_role: discord.PermissionOverwrite(view_channel=True),
+        leader_role: discord.PermissionOverwrite(view_channel=True)
+    }
+
+    rules = await guild.create_text_channel(
+        "📖〢rules",
+        category=category,
+        overwrites={
+            **overwrites,
+            team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+            leader_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        }
+    )
+
+    announcements = await guild.create_text_channel(
+        "📢・announcements",
+        category=category,
+        overwrites={
+            **overwrites,
+            team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+            leader_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        }
+    )
+
+    missions = await guild.create_text_channel(
+        "🛡・missions",
+        category=category,
+        overwrites={
+            **overwrites,
+            team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+            leader_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        }
+    )
+
+    await interaction.response.send_message("✅ تم إنشاء قنوات الفريق", ephemeral=True)
 
 # ================== RUN ==================
 bot.run(TOKEN)
