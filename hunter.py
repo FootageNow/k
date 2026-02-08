@@ -17,12 +17,7 @@ DATA_FILE = "data.json"
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {
-            "teams": {},
-            "points": {},
-            "join_requests": {},
-            "leaderboard_msg_id": None,
-            "leaderboard_channel": None,
-            "blacklist_roles": {}
+            "teams": {}
         }
     with open(DATA_FILE, "r") as f:
         return json.load(f)
@@ -49,7 +44,7 @@ async def on_ready():
     await bot.tree.sync()
     print(f"Bot Ready | {bot.user}")
 
-# ================== TEAM SYSTEM ==================
+# ================== TEAM CREATION ==================
 @bot.tree.command(name="create-team")
 async def create_team(interaction: discord.Interaction, team_name: str):
     if not has_role(interaction.user, "TEAM-LEADER"):
@@ -73,7 +68,7 @@ async def create_team(interaction: discord.Interaction, team_name: str):
         "Team created successfully.", ephemeral=True
     )
 
-# ================== TEAM CHANNELS ==================
+# ================== TEAM CHANNELS (NO DUPLICATION) ==================
 @bot.tree.command(name="team_channels")
 async def team_channels(interaction: discord.Interaction):
     if not has_role(interaction.user, "TEAM-LEADER"):
@@ -95,50 +90,33 @@ async def team_channels(interaction: discord.Interaction):
     if not category:
         category = await guild.create_category("TEAMS")
 
-    # base: only team role can SEE, nobody else
+    existing = [c.name for c in category.channels]
+
     base_overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        team_role: discord.PermissionOverwrite(
-            view_channel=True,
-            send_messages=False
-        )
+        team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False)
     }
 
-    rules = await guild.create_text_channel(
-        "📖〢rules",
-        category=category,
-        overwrites=base_overwrites
-    )
-    await rules.set_permissions(
-        interaction.user,
-        send_messages=True
-    )
+    async def create_once(name):
+        if name in existing:
+            return None
+        ch = await guild.create_text_channel(
+            name,
+            category=category,
+            overwrites=base_overwrites
+        )
+        await ch.set_permissions(interaction.user, send_messages=True)
+        return ch
 
-    announcements = await guild.create_text_channel(
-        "📢・announcements",
-        category=category,
-        overwrites=base_overwrites
-    )
-    await announcements.set_permissions(
-        interaction.user,
-        send_messages=True
-    )
-
-    missions = await guild.create_text_channel(
-        "🛡・missions",
-        category=category,
-        overwrites=base_overwrites
-    )
-    await missions.set_permissions(
-        interaction.user,
-        send_messages=True
-    )
+    await create_once("📖〢rules")
+    await create_once("📢・announcements")
+    await create_once("🛡・missions")
 
     await interaction.response.send_message(
-        "Team channels created successfully.", ephemeral=True
+        "Team channels checked / created successfully.", ephemeral=True
     )
 
-# ================== CHANNEL MANAGEMENT ==================
+# ================== CREATE CHANNEL (SPECIAL CATEGORY) ==================
 @bot.tree.command(name="create_channel")
 async def create_channel(
     interaction: discord.Interaction,
@@ -159,7 +137,10 @@ async def create_channel(
     guild = interaction.guild
     team_name = data["teams"][uid]["team"]
     team_role = discord.utils.get(guild.roles, name=team_name)
-    category = discord.utils.get(guild.categories, name="TEAMS")
+
+    category = discord.utils.get(guild.categories, name="-----------------")
+    if not category:
+        category = await guild.create_category("-----------------")
 
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
@@ -175,85 +156,10 @@ async def create_channel(
         overwrites=overwrites
     )
 
-    # leader can always write
     await channel.set_permissions(interaction.user, send_messages=True)
 
     await interaction.response.send_message(
         "Channel created successfully.", ephemeral=True
-    )
-
-@bot.tree.command(name="delete_channel")
-async def delete_channel(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel
-):
-    if not has_role(interaction.user, "TEAM-LEADER"):
-        return await interaction.response.send_message(
-            "Only TEAM-LEADER can use this command.", ephemeral=True
-        )
-
-    if channel.category and channel.category.name == "TEAMS":
-        await channel.delete()
-        await interaction.response.send_message(
-            "Channel deleted.", ephemeral=True
-        )
-    else:
-        await interaction.response.send_message(
-            "You can only delete team channels.", ephemeral=True
-        )
-
-@bot.tree.command(name="move_channel")
-async def move_channel(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    position: int
-):
-    if not has_role(interaction.user, "TEAM-LEADER"):
-        return await interaction.response.send_message(
-            "Only TEAM-LEADER can use this command.", ephemeral=True
-        )
-
-    await channel.edit(position=position)
-    await interaction.response.send_message(
-        "Channel position updated.", ephemeral=True
-    )
-
-@bot.tree.command(name="grant_write")
-async def grant_write(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    member: discord.Member
-):
-    if not has_role(interaction.user, "TEAM-LEADER"):
-        return await interaction.response.send_message(
-            "Only TEAM-LEADER can use this command.", ephemeral=True
-        )
-
-    ow = channel.overwrites_for(member)
-    ow.send_messages = True
-    await channel.set_permissions(member, overwrite=ow)
-
-    await interaction.response.send_message(
-        "Write permission granted.", ephemeral=True
-    )
-
-@bot.tree.command(name="remove_write")
-async def remove_write(
-    interaction: discord.Interaction,
-    channel: discord.TextChannel,
-    member: discord.Member
-):
-    if not has_role(interaction.user, "TEAM-LEADER"):
-        return await interaction.response.send_message(
-            "Only TEAM-LEADER can use this command.", ephemeral=True
-        )
-
-    ow = channel.overwrites_for(member)
-    ow.send_messages = False
-    await channel.set_permissions(member, overwrite=ow)
-
-    await interaction.response.send_message(
-        "Write permission removed.", ephemeral=True
     )
 
 # ================== RUN ==================
