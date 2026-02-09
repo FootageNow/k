@@ -18,16 +18,16 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {
-            "teams": {},                 # leader_id : team_name
-            "join_requests": {},         # team_name : [user_ids]
-            "points": {},                # user_id : points
+            "teams": {},
+            "join_requests": {},
+            "points": {},
             "leaderboard_channel": None,
             "leaderboard_msg_id": None,
             "team_lb_channel": None,
             "team_lb_msg_id": None,
-            "blacklist_roles": {},
-            "invisible_users": {},       # user_id : {id, expires}
-            "invisible_teams": {}        # team_name : {id, expires}
+            "blacklist_roles": {},          # user_id : [role_ids]
+            "invisible_users": {},          # user_id : {id, expires}
+            "invisible_teams": {}
         }
     with open(DATA_FILE, "r") as f:
         return json.load(f)
@@ -58,15 +58,15 @@ def now():
 async def update_player_leaderboard():
     if not data["leaderboard_channel"] or not data["leaderboard_msg_id"]:
         return
-    channel = bot.get_channel(data["leaderboard_channel"])
-    if not channel:
+    ch = bot.get_channel(data["leaderboard_channel"])
+    if not ch:
         return
 
-    msg = await channel.fetch_message(data["leaderboard_msg_id"])
+    msg = await ch.fetch_message(data["leaderboard_msg_id"])
     top = sorted(data["points"].items(), key=lambda x: x[1], reverse=True)[:10]
 
     text = "**🏆 Top 10 Players 🏆**\n"
-    for i, (uid, pts) in enumerate(top, start=1):
+    for i, (uid, pts) in enumerate(top, 1):
         if uid in data["invisible_users"]:
             name = data["invisible_users"][uid]["id"]
         else:
@@ -79,11 +79,11 @@ async def update_player_leaderboard():
 async def update_team_leaderboard(guild):
     if not data["team_lb_channel"] or not data["team_lb_msg_id"]:
         return
-    channel = guild.get_channel(data["team_lb_channel"])
-    if not channel:
+    ch = guild.get_channel(data["team_lb_channel"])
+    if not ch:
         return
 
-    msg = await channel.fetch_message(data["team_lb_msg_id"])
+    msg = await ch.fetch_message(data["team_lb_msg_id"])
     teams_points = {}
 
     for leader_id, team in data["teams"].items():
@@ -91,14 +91,13 @@ async def update_team_leaderboard(guild):
         if not role:
             continue
         total = sum(data["points"].get(str(m.id), 0) for m in role.members)
-
         display = data["invisible_teams"].get(team, {}).get("id", team)
         teams_points[display] = total
 
     sorted_teams = sorted(teams_points.items(), key=lambda x: x[1], reverse=True)[:10]
 
     text = "**🏆 Top 10 Teams 🏆**\n"
-    for i, (team, pts) in enumerate(sorted_teams, start=1):
+    for i, (team, pts) in enumerate(sorted_teams, 1):
         text += f"{i}. {team} — {pts} points\n"
 
     await msg.edit(content=text)
@@ -114,20 +113,19 @@ async def on_ready():
 @bot.tree.command(name="create-team")
 async def create_team(interaction: discord.Interaction, team_name: str):
     if not has_role(interaction.user, "TEAM-LEADER"):
-        return await interaction.response.send_message("Only TEAM-LEADER can use this.", ephemeral=True)
+        return await interaction.response.send_message("Only TEAM-LEADER.", ephemeral=True)
 
     if team_name in data["teams"].values():
         return await interaction.response.send_message("Team name already exists.", ephemeral=True)
 
-    uid = str(interaction.user.id)
     role = await get_or_create_role(interaction.guild, team_name)
     await interaction.user.add_roles(role)
 
-    data["teams"][uid] = team_name
+    data["teams"][str(interaction.user.id)] = team_name
     data["join_requests"][team_name] = []
     save_data()
 
-    await interaction.response.send_message("Team created successfully.", ephemeral=True)
+    await interaction.response.send_message("Team created.", ephemeral=True)
 
 @bot.tree.command(name="team-join")
 async def team_join(interaction: discord.Interaction, team_name: str):
@@ -143,12 +141,12 @@ async def team_join(interaction: discord.Interaction, team_name: str):
 
 @bot.tree.command(name="team-accept")
 async def team_accept(interaction: discord.Interaction, member: discord.Member):
-    leader_id = str(interaction.user.id)
-    if leader_id not in data["teams"]:
+    uid = str(interaction.user.id)
+    if uid not in data["teams"]:
         return await interaction.response.send_message("Not a team leader.", ephemeral=True)
 
-    team = data["teams"][leader_id]
-    if member.id not in data["join_requests"].get(team, []):
+    team = data["teams"][uid]
+    if member.id not in data["join_requests"][team]:
         return await interaction.response.send_message("No join request.", ephemeral=True)
 
     role = discord.utils.get(interaction.guild.roles, name=team)
@@ -158,7 +156,19 @@ async def team_accept(interaction: discord.Interaction, member: discord.Member):
 
     await interaction.response.send_message("Member accepted.", ephemeral=True)
 
-# ========================= PAY =========================
+# ========================= POINTS =========================
+@bot.tree.command(name="give-points")
+@app_commands.checks.has_any_role("Mod", "HEAD MOD")
+async def give_points(interaction: discord.Interaction, member: discord.Member, points: int):
+    uid = str(member.id)
+    data["points"][uid] = data["points"].get(uid, 0) + points
+    save_data()
+
+    await update_player_leaderboard()
+    await update_team_leaderboard(interaction.guild)
+
+    await interaction.response.send_message("Points updated.", ephemeral=True)
+
 @bot.tree.command(name="pay")
 async def pay(interaction: discord.Interaction, member: discord.Member, amount: int):
     sender = str(interaction.user.id)
@@ -176,46 +186,29 @@ async def pay(interaction: discord.Interaction, member: discord.Member, amount: 
 
     await interaction.response.send_message("Payment successful.", ephemeral=True)
 
-# ========================= MISSIONS =========================
-@bot.tree.command(name="create_mission")
-async def create_mission(
-    interaction: discord.Interaction,
-    roblox_username: str,
-    bounty: str,
-    note: str,
-    time_left: str,
-    ping_role: discord.Role | None = None
-):
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "https://users.roblox.com/v1/usernames/users",
-            json={"usernames": [roblox_username]}
-        ) as r:
-            js = await r.json()
-            if not js["data"]:
-                return await interaction.response.send_message("Roblox user not found.", ephemeral=True)
-            rid = js["data"][0]["id"]
+# ========================= BLACKLIST =========================
+@bot.tree.command(name="blacklist")
+@app_commands.checks.has_any_role("Mod", "HEAD MOD")
+async def blacklist(interaction: discord.Interaction, member: discord.Member):
+    bl_role = await get_or_create_role(interaction.guild, "blacklist")
+    data["blacklist_roles"][str(member.id)] = [r.id for r in member.roles if r != interaction.guild.default_role]
+    await member.edit(roles=[bl_role])
+    save_data()
+    await interaction.response.send_message("User blacklisted.", ephemeral=True)
 
-        async with session.get(
-            f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={rid}&size=420x420&format=Png"
-        ) as r:
-            img = await r.json()
-            avatar = img["data"][0]["imageUrl"]
+@bot.tree.command(name="unblacklist")
+@app_commands.checks.has_any_role("Mod", "HEAD MOD")
+async def unblacklist(interaction: discord.Interaction, member: discord.Member):
+    uid = str(member.id)
+    if uid not in data["blacklist_roles"]:
+        return await interaction.response.send_message("User is not blacklisted.", ephemeral=True)
 
-    embed = discord.Embed(title="🛡 New Mission")
-    embed.add_field(name="Target", value=roblox_username, inline=False)
-    embed.add_field(name="Bounty", value=bounty, inline=False)
-    embed.add_field(name="Note", value=note, inline=False)
-    embed.add_field(name="Time", value=time_left, inline=False)
-    embed.set_image(url=avatar)
+    roles = [interaction.guild.get_role(rid) for rid in data["blacklist_roles"][uid] if interaction.guild.get_role(rid)]
+    await member.edit(roles=roles)
+    del data["blacklist_roles"][uid]
+    save_data()
 
-    for ch in interaction.guild.text_channels:
-        if "missions" in ch.name:
-            if ping_role:
-                await ch.send(ping_role.mention)
-            await ch.send(embed=embed)
-
-    await interaction.response.send_message("Mission sent.", ephemeral=True)
+    await interaction.response.send_message("Blacklist removed.", ephemeral=True)
 
 # ========================= INVISIBLE =========================
 @bot.tree.command(name="invisible")
@@ -231,7 +224,7 @@ async def invisible(interaction: discord.Interaction, days: int):
     }
     save_data()
 
-    await interaction.user.send(f"🔒 Your Invisible ID: `{fake}`")
+    await interaction.user.send(f"🔒 Invisible ID: `{fake}`")
     await interaction.response.send_message("Invisible enabled.", ephemeral=True)
 
 @bot.tree.command(name="uninvisible")
