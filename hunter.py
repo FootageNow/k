@@ -139,7 +139,18 @@ async def team_join(interaction: discord.Interaction, team_name: str):
     data["join_requests"][team_name].append(interaction.user.id)
     save_data()
 
+    # ---------------- NOTIFY TEAM LEADER ----------------
+    for leader_id, tname in data["teams"].items():
+        if tname.lower() == team_name.lower():
+            leader = interaction.guild.get_member(int(leader_id))
+            if leader:
+                try:
+                    await leader.send(f"📩 **{interaction.user.name}** requested to join your team **{team_name}**")
+                except:
+                    pass
+
     await interaction.response.send_message("Join request sent.", ephemeral=True)
+
 
 @bot.tree.command(name="team-accept")
 async def team_accept(interaction: discord.Interaction, member: discord.Member):
