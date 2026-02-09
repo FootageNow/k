@@ -309,6 +309,130 @@ async def team_leaderboard(interaction: discord.Interaction):
     await interaction.response.send_message("Team leaderboard created.", ephemeral=True)
 
 # ========================= MISSION SYSTEM (GLOBAL) =========================
+@bot.tree.command(name="show-my-team-points")
+async def show_my_team_points(interaction: discord.Interaction):
+    guild = interaction.guild
+    member = interaction.user
+
+    team_role = None
+    for role in member.roles:
+        if role.name in data["teams"].values():
+            team_role = role
+            break
+
+    if not team_role:
+        return await interaction.response.send_message(
+            "You are not in a team.", ephemeral=True
+        )
+
+    total = sum(data["points"].get(str(m.id), 0) for m in team_role.members)
+
+    teams_points = {}
+    for leader_id, team in data["teams"].items():
+        role = discord.utils.get(guild.roles, name=team)
+        if role:
+            teams_points[team] = sum(
+                data["points"].get(str(m.id), 0) for m in role.members
+            )
+
+    sorted_teams = sorted(teams_points.items(), key=lambda x: x[1], reverse=True)
+    rank = next((i+1 for i, (t, _) in enumerate(sorted_teams) if t == team_role.name), "N/A")
+
+    await interaction.response.send_message(
+        f"Team: **{team_role.name}**\nTotal Points: **{total}**\nRank: **#{rank}**",
+        ephemeral=True
+    )
+# ========================= MISSION SYSTEM (GLOBAL) =========================
+@bot.tree.command(name="show-my-points")
+async def show_my_points(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    pts = data["points"].get(uid, 0)
+
+    sorted_players = sorted(data["points"].items(), key=lambda x: x[1], reverse=True)
+    rank = next((i+1 for i, (pid, _) in enumerate(sorted_players) if pid == uid), "N/A")
+
+    await interaction.response.send_message(
+        f"Your Points: **{pts}**\nYour Rank: **#{rank}**",
+        ephemeral=True
+    )
+# ========================= MISSION SYSTEM (GLOBAL) =========================
+@bot.tree.command(name="show-team-leaderboard")
+async def show_team_leaderboard(interaction: discord.Interaction):
+    guild = interaction.guild
+    teams_points = {}
+
+    for leader_id, team in data["teams"].items():
+        role = discord.utils.get(guild.roles, name=team)
+        if not role:
+            continue
+        total = sum(data["points"].get(str(m.id), 0) for m in role.members)
+        display = team
+
+        if team in data.get("invisible_teams", {}):
+            display = data["invisible_teams"][team]["id"]
+
+        teams_points[display] = total
+
+    if not teams_points:
+        return await interaction.response.send_message("No teams found.")
+
+    sorted_teams = sorted(teams_points.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    text = "**🏆 Top 10 Teams 🏆**\n"
+    for i, (team, pts) in enumerate(sorted_teams, start=1):
+        text += f"{i}. **{team}** — {pts} points\n"
+
+    await interaction.response.send_message(text)
+
+# ========================= MISSION SYSTEM (GLOBAL) =========================
+import asyncio
+
+# ========================= AUTO REFRESH INVISIBLE =========================
+async def invisible_refresher():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        current = int(time.time())
+        changed = False
+
+        # USERS
+        for uid, info in list(data.get("invisible_users", {}).items()):
+            if current >= info["expires"]:
+                new_id = generate_id()
+                data["invisible_users"][uid]["id"] = new_id
+                data["invisible_users"][uid]["expires"] = current + 86400
+                changed = True
+                user = bot.get_user(int(uid))
+                if user:
+                    try:
+                        await user.send(
+                            f"🔄 Your Invisible ID has been refreshed.\nNew ID: `{new_id}`"
+                        )
+                    except:
+                        pass
+
+        # TEAMS
+        for team, info in list(data.get("invisible_teams", {}).items()):
+            if current >= info["expires"]:
+                new_id = generate_id()
+                data["invisible_teams"][team]["id"] = new_id
+                data["invisible_teams"][team]["expires"] = current + 86400
+                changed = True
+
+        if changed:
+            save_data()
+
+        await asyncio.sleep(60)
+
+
+@bot.event
+async def on_ready():
+    bot.loop.create_task(invisible_refresher())
+
+# ========================= AUTO REFRESH INVISIBLE =========================
+
+
+
+# ========================= MISSION SYSTEM (GLOBAL) =========================
 @bot.tree.command(name="create_mission")
 async def create_mission(
     interaction: discord.Interaction,
