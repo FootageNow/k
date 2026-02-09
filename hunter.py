@@ -101,6 +101,91 @@ async def update_team_leaderboard(guild):
         text += f"{i}. {team} — {pts} points\n"
 
     await msg.edit(content=text)
+# ----------------
+# ========================= TEAM CHANNELS =========================
+@bot.tree.command(name="team_channels")
+async def team_channels(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    team_name = data["teams"].get(uid)
+    if not team_name:
+        return await interaction.response.send_message("You do not own a team.", ephemeral=True)
+
+    guild = interaction.guild
+    team_role = discord.utils.get(guild.roles, name=team_name)
+
+    # create or get category
+    category = discord.utils.get(guild.categories, name="TEAMS")
+    if not category:
+        category = await guild.create_category("TEAMS")
+
+    existing = [c.name for c in category.channels]
+
+    # overwrites: default role cannot see, team role can see but not write
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False)
+    }
+
+    async def create_once(name):
+        if name in existing:
+            return
+        ch = await guild.create_text_channel(name, category=category, overwrites=overwrites)
+        # allow only team leader to write
+        await ch.set_permissions(interaction.user, send_messages=True)
+
+    await create_once("📖〢rules")
+    await create_once("📢・announcements")
+    await create_once("🛡・missions")
+    await interaction.response.send_message("Team channels ready.", ephemeral=True)
+
+
+# ========================= CREATE CHANNEL =========================
+@bot.tree.command(name="create_channel")
+async def create_channel(interaction: discord.Interaction, name: str, team_can_write: bool):
+    uid = str(interaction.user.id)
+    team_name = data["teams"].get(uid)
+    guild = interaction.guild
+    team_role = discord.utils.get(guild.roles, name=team_name)
+
+    # create or get category
+    category = discord.utils.get(guild.categories, name="-----------------")
+    if not category:
+        category = await guild.create_category("-----------------")
+
+    # overwrites: everyone else cannot see, team can see, optionally write
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        team_role: discord.PermissionOverwrite(view_channel=True, send_messages=team_can_write)
+    }
+
+    ch = await guild.create_text_channel(name, category=category, overwrites=overwrites)
+    # allow only creator to write
+    await ch.set_permissions(interaction.user, send_messages=True)
+
+    await interaction.response.send_message("Text channel created.", ephemeral=True)
+
+# ----- 
+# ========================= DELETE CHANNEL =========================
+@bot.tree.command(name="delete_channel")
+async def delete_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    uid = str(interaction.user.id)
+    team_name = data["teams"].get(uid)
+    if not team_name:
+        return await interaction.response.send_message("You do not own a team.", ephemeral=True)
+
+    # check if channel is in a category visible to team role
+    team_role = discord.utils.get(interaction.guild.roles, name=team_name)
+    if not team_role:
+        return await interaction.response.send_message("Team role not found.", ephemeral=True)
+
+    perms = channel.permissions_for(team_role)
+    if not perms.view_channel:
+        return await interaction.response.send_message("This channel is not part of your team.", ephemeral=True)
+
+    # delete channel
+    await channel.delete()
+    await interaction.response.send_message(f"Channel `{channel.name}` deleted.", ephemeral=True)
+
 
 # ========================= READY =========================
 @bot.event
