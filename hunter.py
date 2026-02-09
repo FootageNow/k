@@ -23,6 +23,8 @@ def load_data():
             "points": {},
             "leaderboard_channel": None,
             "leaderboard_msg_id": None,
+            "team_lb_channel": None,
+            "team_lb_msg_id": None,
             "blacklist_roles": {}
         }
     with open(DATA_FILE, "r") as f:
@@ -44,6 +46,7 @@ async def get_or_create_role(guild, name):
         role = await guild.create_role(name=name)
     return role
 
+# ========================= PLAYER LEADERBOARD =========================
 async def update_leaderboard():
     if not data["leaderboard_channel"] or not data["leaderboard_msg_id"]:
         return
@@ -56,7 +59,37 @@ async def update_leaderboard():
         text = "**🏆 Top 10 Players 🏆**\n"
         for i, (uid, pts) in enumerate(top, start=1):
             user = await bot.fetch_user(int(uid))
-            text += f"{i}. {user.name} - {pts} points\n"
+            text += f"{i}. {user.name} — {pts} points\n"
+        await msg.edit(content=text)
+    except:
+        pass
+
+# ========================= TEAM LEADERBOARD =========================
+async def update_team_leaderboard(guild):
+    if not data["team_lb_channel"] or not data["team_lb_msg_id"]:
+        return
+    channel = guild.get_channel(data["team_lb_channel"])
+    if not channel:
+        return
+    try:
+        msg = await channel.fetch_message(data["team_lb_msg_id"])
+        teams_points = {}
+
+        for leader_id, team_name in data["teams"].items():
+            role = discord.utils.get(guild.roles, name=team_name)
+            if not role:
+                continue
+            total = 0
+            for member in role.members:
+                total += data["points"].get(str(member.id), 0)
+            teams_points[team_name] = total
+
+        sorted_teams = sorted(teams_points.items(), key=lambda x: x[1], reverse=True)[:10]
+
+        text = "**🏆 Top 10 Teams 🏆**\n"
+        for i, (team, pts) in enumerate(sorted_teams, start=1):
+            text += f"{i}. {team} — {pts} points\n"
+
         await msg.edit(content=text)
     except:
         pass
@@ -67,7 +100,7 @@ async def on_ready():
     await bot.tree.sync()
     print(f"Bot ready as {bot.user}")
 
-# ========================= TEAM =========================
+# ========================= TEAM SYSTEM =========================
 @bot.tree.command(name="create-team")
 async def create_team(interaction: discord.Interaction, team_name: str):
     if not has_role(interaction.user, "TEAM-LEADER"):
@@ -90,15 +123,7 @@ async def team_join(interaction: discord.Interaction, team_name: str):
         return await interaction.response.send_message("Already requested.", ephemeral=True)
     data["join_requests"][team_name].append(interaction.user.id)
     save_data()
-    for leader_id, tname in data["teams"].items():
-        if tname.lower() == team_name.lower():
-            leader = interaction.guild.get_member(int(leader_id))
-            if leader:
-                try:
-                    await leader.send(f"{interaction.user.name} requested to join {team_name}")
-                except:
-                    pass
-    await interaction.response.send_message("Request sent.", ephemeral=True)
+    await interaction.response.send_message("Join request sent.", ephemeral=True)
 
 @bot.tree.command(name="team-accept")
 async def team_accept(interaction: discord.Interaction, member: discord.Member):
@@ -113,38 +138,6 @@ async def team_accept(interaction: discord.Interaction, member: discord.Member):
     data["join_requests"][team_name].remove(member.id)
     save_data()
     await interaction.response.send_message("Member accepted.", ephemeral=True)
-
-# ========================= CHANNELS =========================
-@bot.tree.command(name="team_channels")
-async def team_channels(interaction: discord.Interaction):
-    uid = str(interaction.user.id)
-    team_name = data["teams"].get(uid)
-    if not team_name:
-        return await interaction.response.send_message("No team.", ephemeral=True)
-
-    guild = interaction.guild
-    team_role = discord.utils.get(guild.roles, name=team_name)
-    category = discord.utils.get(guild.categories, name="TEAMS")
-    if not category:
-        category = await guild.create_category("TEAMS")
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False)
-    }
-
-    async def create_once(name, leader_write=False):
-        if discord.utils.get(category.channels, name=name):
-            return
-        ch = await guild.create_text_channel(name, category=category, overwrites=overwrites)
-        if leader_write:
-            await ch.set_permissions(interaction.user, send_messages=True)
-
-    await create_once("📖〢rules", True)
-    await create_once("📢・announcements", True)
-    await create_once("🛡・missions", True)
-
-    await interaction.response.send_message("Team channels created.", ephemeral=True)
 
 # ========================= BLACKLIST =========================
 @bot.tree.command(name="blacklist")
@@ -176,6 +169,7 @@ async def give_points(interaction: discord.Interaction, member: discord.Member, 
     data["points"][uid] = data["points"].get(uid, 0) + points
     save_data()
     await update_leaderboard()
+    await update_team_leaderboard(interaction.guild)
     await interaction.response.send_message("Points updated.", ephemeral=True)
 
 @bot.tree.command(name="points-leaderboard")
@@ -188,39 +182,25 @@ async def leaderboard(interaction: discord.Interaction):
     await update_leaderboard()
     await interaction.response.send_message("Leaderboard created.", ephemeral=True)
 
-# ========================= TEAM LEADERBOARD =========================
 @bot.tree.command(name="team-leaderboard")
 async def team_leaderboard(interaction: discord.Interaction):
-    teams_points = {}
+    msg = await interaction.channel.send("Loading team leaderboard...")
+    data["team_lb_channel"] = interaction.channel.id
+    data["team_lb_msg_id"] = msg.id
+    save_data()
+    await update_team_leaderboard(interaction.guild)
+    await interaction.response.send_message("Team leaderboard created.", ephemeral=True)
 
-    for leader_id, team_name in data["teams"].items():
-        role = discord.utils.get(interaction.guild.roles, name=team_name)
-        if not role:
-            continue
-        total = 0
-        for member in role.members:
-            total += data["points"].get(str(member.id), 0)
-        teams_points[team_name] = total
-
-    if not teams_points:
-        return await interaction.response.send_message("No teams found.", ephemeral=True)
-
-    sorted_teams = sorted(teams_points.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    text = "**🏆 Top 10 Teams 🏆**\n"
-    for i, (team, pts) in enumerate(sorted_teams, start=1):
-        text += f"{i}. {team} - {pts} points\n"
-
-    await interaction.response.send_message(text)
-
-# ========================= MISSION =========================
+# ========================= MISSION SYSTEM =========================
 @bot.tree.command(name="create_mission")
 async def create_mission(
     interaction: discord.Interaction,
     roblox_username: str,
+    bounty_ping: discord.Role,
     bounty: str,
     note: str,
-    time: str
+    time: str,
+    ping: bool
 ):
     await interaction.response.defer(ephemeral=True)
 
@@ -247,19 +227,16 @@ async def create_mission(
     embed.add_field(name="Time", value=time, inline=False)
     embed.set_image(url=avatar)
 
-    sent = False
     for ch in interaction.guild.text_channels:
         if ch.name == "🛡・missions":
             try:
+                if ping:
+                    await ch.send(bounty_ping.mention)
                 await ch.send(embed=embed)
-                sent = True
             except:
                 pass
 
-    if not sent:
-        return await interaction.followup.send("No missions channels found.", ephemeral=True)
-
-    await interaction.followup.send("Mission sent.", ephemeral=True)
+    await interaction.followup.send("Mission sent to all missions channels.", ephemeral=True)
 
 # ========================= RUN =========================
 bot.run(TOKEN)
