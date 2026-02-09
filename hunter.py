@@ -104,23 +104,26 @@ async def update_team_leaderboard(guild):
 # ----------------
 # ========================= TEAM MANAGEMENT =========================
 
-@bot.tree.command(name="team_remove")
-async def team_remove(interaction: discord.Interaction):
-    """Remove all members from your team but keep the team."""
-    uid = str(interaction.user.id)
-    if uid not in data["teams"]:
+# ========================= TEAM REMOVE MEMBER =========================
+@bot.tree.command(name="team-remove")
+async def team_remove(interaction: discord.Interaction, member: discord.Member):
+    """Remove a specific member from your team (TEAM-LEADER only)."""
+    leader_id = str(interaction.user.id)
+    if leader_id not in data["teams"]:
         return await interaction.response.send_message("You are not a team leader.", ephemeral=True)
 
-    team_name = data["teams"][uid]
+    team_name = data["teams"][leader_id]
     role = discord.utils.get(interaction.guild.roles, name=team_name)
-    if not role:
-        return await interaction.response.send_message("Team role not found.", ephemeral=True)
+    if role not in member.roles:
+        return await interaction.response.send_message("This member is not in your team.", ephemeral=True)
 
-    for member in role.members:
-        if member != interaction.user:
-            await member.remove_roles(role)
+    await member.remove_roles(role)
+    # Remove from join_requests if they had requested
+    if member.id in data["join_requests"].get(team_name, []):
+        data["join_requests"][team_name].remove(member.id)
 
-    await interaction.response.send_message(f"All members removed from team **{team_name}**.", ephemeral=True)
+    save_data()
+    await interaction.response.send_message(f"{member.mention} has been removed from your team.", ephemeral=True)
 
 
 @bot.tree.command(name="team_delete")
@@ -232,6 +235,41 @@ async def create_channel(interaction: discord.Interaction, name: str, team_can_w
     await interaction.response.send_message("Text channel created.", ephemeral=True)
 
 # ----- 
+# ========================= PAY COMMAND =========================
+@bot.tree.command(name="pay")
+async def pay(interaction: discord.Interaction, member: discord.Member, amount: int):
+    """Pay points to another member. Deducts from your points and team points if applicable."""
+    if amount <= 0:
+        return await interaction.response.send_message("Amount must be greater than 0.", ephemeral=True)
+
+    payer_id = str(interaction.user.id)
+    receiver_id = str(member.id)
+
+    payer_points = data["points"].get(payer_id, 0)
+    if payer_points < amount:
+        return await interaction.response.send_message("You don't have enough points.", ephemeral=True)
+
+    # Deduct from payer
+    data["points"][payer_id] = payer_points - amount
+
+    # Add to receiver
+    data["points"][receiver_id] = data["points"].get(receiver_id, 0) + amount
+
+    # If payer is in a team, update leaderboard points automatically
+    member_roles = interaction.user.roles
+    team_role = next((r for r in member_roles if r.name in data["teams"].values()), None)
+    if team_role:
+        # No need to manually deduct team points; leaderboard sums members points dynamically
+        pass
+
+    save_data()
+
+    # Update both leaderboards
+    await update_player_leaderboard()
+    await update_team_leaderboard(interaction.guild)
+
+    await interaction.response.send_message(f"You paid {amount} points to {member.mention}.", ephemeral=True)
+
 # ========================= INVISIBLE TEAM =========================
 @bot.tree.command(name="invisible_team")
 async def invisible_team(interaction: discord.Interaction, days: int):
