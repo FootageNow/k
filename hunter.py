@@ -165,6 +165,45 @@ async def create_channel(interaction: discord.Interaction, name: str, team_can_w
     await interaction.response.send_message("Text channel created.", ephemeral=True)
 
 # ----- 
+# ========================= INVISIBLE TEAM =========================
+@bot.tree.command(name="invisible_team")
+async def invisible_team(interaction: discord.Interaction, days: int):
+    """Make your team invisible on the leaderboard for a number of days."""
+    uid = str(interaction.user.id)
+    if uid not in data["teams"]:
+        return await interaction.response.send_message("You are not a team leader.", ephemeral=True)
+
+    team_name = data["teams"][uid]
+
+    if team_name in data["invisible_teams"]:
+        return await interaction.response.send_message("Your team is already invisible. Disable it first with /uninvisible_team.", ephemeral=True)
+
+    fake_id = generate_id()
+    data["invisible_teams"][team_name] = {
+        "id": fake_id,
+        "expires": now() + days * 86400
+    }
+    save_data()
+
+    await interaction.user.send(f"Your team **{team_name}** Invisible ID: `{fake_id}`")
+    await interaction.response.send_message(f"Team **{team_name}** is now invisible on the leaderboard for {days} days.", ephemeral=True)
+
+@bot.tree.command(name="uninvisible_team")
+async def uninvisible_team(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    if uid not in data["teams"]:
+        return await interaction.response.send_message("You are not a team leader.", ephemeral=True)
+
+    team_name = data["teams"][uid]
+
+    if team_name not in data["invisible_teams"]:
+        return await interaction.response.send_message("Your team is not invisible.", ephemeral=True)
+
+    del data["invisible_teams"][team_name]
+    save_data()
+
+    await interaction.response.send_message(f"Team **{team_name}** is now visible on the leaderboard.", ephemeral=True)
+
 # ========================= DELETE CHANNEL =========================
 @bot.tree.command(name="delete_channel")
 async def delete_channel(interaction: discord.Interaction, channel: discord.TextChannel):
