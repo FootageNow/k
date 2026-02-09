@@ -188,7 +188,32 @@ async def leaderboard(interaction: discord.Interaction):
     await update_leaderboard()
     await interaction.response.send_message("Leaderboard created.", ephemeral=True)
 
-# ========================= MISSION (NEW) =========================
+# ========================= TEAM LEADERBOARD =========================
+@bot.tree.command(name="team-leaderboard")
+async def team_leaderboard(interaction: discord.Interaction):
+    teams_points = {}
+
+    for leader_id, team_name in data["teams"].items():
+        role = discord.utils.get(interaction.guild.roles, name=team_name)
+        if not role:
+            continue
+        total = 0
+        for member in role.members:
+            total += data["points"].get(str(member.id), 0)
+        teams_points[team_name] = total
+
+    if not teams_points:
+        return await interaction.response.send_message("No teams found.", ephemeral=True)
+
+    sorted_teams = sorted(teams_points.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    text = "**🏆 Top 10 Teams 🏆**\n"
+    for i, (team, pts) in enumerate(sorted_teams, start=1):
+        text += f"{i}. {team} - {pts} points\n"
+
+    await interaction.response.send_message(text)
+
+# ========================= MISSION =========================
 @bot.tree.command(name="create_mission")
 async def create_mission(
     interaction: discord.Interaction,
@@ -215,10 +240,7 @@ async def create_mission(
             img = await r.json()
             avatar = img["data"][0]["imageUrl"]
 
-    embed = discord.Embed(
-        title="🛡 New Mission",
-        color=discord.Color.red()
-    )
+    embed = discord.Embed(title="🛡 New Mission", color=discord.Color.red())
     embed.add_field(name="Target", value=roblox_username, inline=False)
     embed.add_field(name="Bounty", value=bounty, inline=False)
     embed.add_field(name="Note", value=note, inline=False)
