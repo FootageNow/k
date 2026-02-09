@@ -2,7 +2,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import os, json, aiohttp
+import os, json, aiohttp, asyncio, random, time
 
 # ========================= CONFIG =========================
 TOKEN = os.getenv("TOKEN")
@@ -25,7 +25,9 @@ def load_data():
             "leaderboard_msg_id": None,
             "team_lb_channel": None,
             "team_lb_msg_id": None,
-            "blacklist_roles": {}
+            "blacklist_roles": {},
+            "invisible_users": {},
+            "invisible_teams": {}
         }
     with open(DATA_FILE, "r") as f:
         return json.load(f)
@@ -46,6 +48,12 @@ async def get_or_create_role(guild, name):
         role = await guild.create_role(name=name)
     return role
 
+def generate_id():
+    return str(random.randint(10**10, 10**11))
+
+def now():
+    return int(time.time())
+
 # ========================= PLAYER LEADERBOARD =========================
 async def update_leaderboard():
     if not data["leaderboard_channel"] or not data["leaderboard_msg_id"]:
@@ -58,8 +66,13 @@ async def update_leaderboard():
         top = sorted(data["points"].items(), key=lambda x: x[1], reverse=True)[:10]
         text = "**🏆 Top 10 Players 🏆**\n"
         for i, (uid, pts) in enumerate(top, start=1):
-            user = await bot.fetch_user(int(uid))
-            text += f"{i}. {user.name} — {pts} points\n"
+            display_name = uid
+            if uid in data.get("invisible_users", {}):
+                display_name = data["invisible_users"][uid]["id"]
+            else:
+                user = await bot.fetch_user(int(uid))
+                display_name = user.name
+            text += f"{i}. {display_name} — {pts} points\n"
         await msg.edit(content=text)
     except:
         pass
@@ -74,7 +87,6 @@ async def update_team_leaderboard(guild):
     try:
         msg = await channel.fetch_message(data["team_lb_msg_id"])
         teams_points = {}
-
         for leader_id, team_name in data["teams"].items():
             role = discord.utils.get(guild.roles, name=team_name)
             if not role:
@@ -82,13 +94,14 @@ async def update_team_leaderboard(guild):
             total = 0
             for member in role.members:
                 total += data["points"].get(str(member.id), 0)
-            teams_points[team_name] = total
-
+            display_name = team_name
+            if team_name in data.get("invisible_teams", {}):
+                display_name = data["invisible_teams"][team_name]["id"]
+            teams_points[display_name] = total
         sorted_teams = sorted(teams_points.items(), key=lambda x: x[1], reverse=True)[:10]
         text = "**🏆 Top 10 Teams 🏆**\n"
         for i, (team, pts) in enumerate(sorted_teams, start=1):
             text += f"{i}. {team} — {pts} points\n"
-
         await msg.edit(content=text)
     except:
         pass
@@ -96,6 +109,7 @@ async def update_team_leaderboard(guild):
 # ========================= READY =========================
 @bot.event
 async def on_ready():
+    bot.loop.create_task(invisible_refresher())
     await bot.tree.sync()
     print(f"Bot ready as {bot.user}")
 
@@ -138,6 +152,19 @@ async def team_accept(interaction: discord.Interaction, member: discord.Member):
     save_data()
     await interaction.response.send_message("Member accepted.", ephemeral=True)
 
+@bot.tree.command(name="remove-team")
+async def remove_team(interaction: discord.Interaction, member: discord.Member):
+    leader_id = str(interaction.user.id)
+    if leader_id not in data["teams"]:
+        return await interaction.response.send_message("You are not a team leader.", ephemeral=True)
+    team_name = data["teams"][leader_id]
+    role = discord.utils.get(interaction.guild.roles, name=team_name)
+    if role in member.roles:
+        await member.remove_roles(role)
+        await interaction.response.send_message("Member removed from team.", ephemeral=True)
+    else:
+        await interaction.response.send_message("Member is not in your team.", ephemeral=True)
+
 # ========================= TEAM CHANNELS =========================
 @bot.tree.command(name="team_channels")
 async def team_channels(interaction: discord.Interaction):
@@ -145,29 +172,22 @@ async def team_channels(interaction: discord.Interaction):
     team_name = data["teams"].get(uid)
     if not team_name:
         return await interaction.response.send_message("You do not own a team.", ephemeral=True)
-
     guild = interaction.guild
     team_role = discord.utils.get(guild.roles, name=team_name)
     category = discord.utils.get(guild.categories, name="TEAMS")
     if not category:
         category = await guild.create_category("TEAMS")
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False)
-    }
-
+    overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                  team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False)}
     async def create_once(name, leader_write=False):
         if discord.utils.get(category.channels, name=name):
             return
         ch = await guild.create_text_channel(name, category=category, overwrites=overwrites)
         if leader_write:
             await ch.set_permissions(interaction.user, send_messages=True)
-
     await create_once("📖〢rules", True)
     await create_once("📢・announcements", True)
     await create_once("🛡・missions", True)
-
     await interaction.response.send_message("Team channels created.", ephemeral=True)
 
 # ========================= CUSTOM CHANNELS =========================
@@ -177,18 +197,13 @@ async def create_channel(interaction: discord.Interaction, name: str, team_can_w
     team_name = data["teams"].get(uid)
     if not team_name:
         return await interaction.response.send_message("No team.", ephemeral=True)
-
     guild = interaction.guild
     team_role = discord.utils.get(guild.roles, name=team_name)
     category = discord.utils.get(guild.categories, name="-----------------")
     if not category:
         category = await guild.create_category("-----------------")
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        team_role: discord.PermissionOverwrite(view_channel=True, send_messages=team_can_write)
-    }
-
+    overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                  team_role: discord.PermissionOverwrite(view_channel=True, send_messages=team_can_write)}
     ch = await guild.create_text_channel(name, category=category, overwrites=overwrites)
     await ch.set_permissions(interaction.user, send_messages=True)
     await interaction.response.send_message("Channel created.", ephemeral=True)
@@ -199,20 +214,47 @@ async def create_voice_channel(interaction: discord.Interaction, name: str):
     team_name = data["teams"].get(uid)
     if not team_name:
         return await interaction.response.send_message("No team.", ephemeral=True)
-
     guild = interaction.guild
     team_role = discord.utils.get(guild.roles, name=team_name)
     category = discord.utils.get(guild.categories, name="-----------------")
     if not category:
         category = await guild.create_category("-----------------")
-
-    overwrites = {
-        guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        team_role: discord.PermissionOverwrite(view_channel=True, connect=True)
-    }
-
+    overwrites = {guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                  team_role: discord.PermissionOverwrite(view_channel=True, connect=True)}
     await guild.create_voice_channel(name, category=category, overwrites=overwrites)
     await interaction.response.send_message("Voice channel created.", ephemeral=True)
+
+@bot.tree.command(name="delete_channel")
+async def delete_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+    uid = str(interaction.user.id)
+    team_name = data["teams"].get(uid)
+    if not team_name or channel.category is None or channel.category.name != f"{team_name}_CATEGORY":
+        return await interaction.response.send_message("You can only delete your team channels.", ephemeral=True)
+    await channel.delete()
+    await interaction.response.send_message("Channel deleted.", ephemeral=True)
+
+@bot.tree.command(name="move_channel")
+async def move_channel(interaction: discord.Interaction, channel: discord.TextChannel, position: int):
+    uid = str(interaction.user.id)
+    team_name = data["teams"].get(uid)
+    if not team_name or channel.category is None or channel.category.name != f"{team_name}_CATEGORY":
+        return await interaction.response.send_message("You can only move your team channels.", ephemeral=True)
+    await channel.edit(position=position)
+    await interaction.response.send_message("Channel moved.", ephemeral=True)
+
+@bot.tree.command(name="grant_write")
+async def grant_write(interaction: discord.Interaction, channel: discord.TextChannel, member: discord.Member):
+    ow = channel.overwrites_for(member)
+    ow.send_messages = True
+    await channel.set_permissions(member, overwrite=ow)
+    await interaction.response.send_message("Write permission granted.", ephemeral=True)
+
+@bot.tree.command(name="remove_write")
+async def remove_write(interaction: discord.Interaction, channel: discord.TextChannel, member: discord.Member):
+    ow = channel.overwrites_for(member)
+    ow.send_messages = False
+    await channel.set_permissions(member, overwrite=ow)
+    await interaction.response.send_message("Write permission removed.", ephemeral=True)
 
 # ========================= BLACKLIST =========================
 @bot.tree.command(name="blacklist")
@@ -318,5 +360,5 @@ async def create_mission(
 
     await interaction.followup.send("Mission sent to all missions channels.", ephemeral=True)
 
-# ========================= RUN =========================
+# ========================= END OF SCRIPT =========================
 bot.run(TOKEN)
