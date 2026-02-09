@@ -85,7 +85,6 @@ async def update_team_leaderboard(guild):
             teams_points[team_name] = total
 
         sorted_teams = sorted(teams_points.items(), key=lambda x: x[1], reverse=True)[:10]
-
         text = "**🏆 Top 10 Teams 🏆**\n"
         for i, (team, pts) in enumerate(sorted_teams, start=1):
             text += f"{i}. {team} — {pts} points\n"
@@ -139,6 +138,82 @@ async def team_accept(interaction: discord.Interaction, member: discord.Member):
     save_data()
     await interaction.response.send_message("Member accepted.", ephemeral=True)
 
+# ========================= TEAM CHANNELS =========================
+@bot.tree.command(name="team_channels")
+async def team_channels(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
+    team_name = data["teams"].get(uid)
+    if not team_name:
+        return await interaction.response.send_message("You do not own a team.", ephemeral=True)
+
+    guild = interaction.guild
+    team_role = discord.utils.get(guild.roles, name=team_name)
+    category = discord.utils.get(guild.categories, name="TEAMS")
+    if not category:
+        category = await guild.create_category("TEAMS")
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False)
+    }
+
+    async def create_once(name, leader_write=False):
+        if discord.utils.get(category.channels, name=name):
+            return
+        ch = await guild.create_text_channel(name, category=category, overwrites=overwrites)
+        if leader_write:
+            await ch.set_permissions(interaction.user, send_messages=True)
+
+    await create_once("📖〢rules", True)
+    await create_once("📢・announcements", True)
+    await create_once("🛡・missions", True)
+
+    await interaction.response.send_message("Team channels created.", ephemeral=True)
+
+# ========================= CUSTOM CHANNELS =========================
+@bot.tree.command(name="create_channel")
+async def create_channel(interaction: discord.Interaction, name: str, team_can_write: bool):
+    uid = str(interaction.user.id)
+    team_name = data["teams"].get(uid)
+    if not team_name:
+        return await interaction.response.send_message("No team.", ephemeral=True)
+
+    guild = interaction.guild
+    team_role = discord.utils.get(guild.roles, name=team_name)
+    category = discord.utils.get(guild.categories, name="-----------------")
+    if not category:
+        category = await guild.create_category("-----------------")
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        team_role: discord.PermissionOverwrite(view_channel=True, send_messages=team_can_write)
+    }
+
+    ch = await guild.create_text_channel(name, category=category, overwrites=overwrites)
+    await ch.set_permissions(interaction.user, send_messages=True)
+    await interaction.response.send_message("Channel created.", ephemeral=True)
+
+@bot.tree.command(name="create_voice_channel")
+async def create_voice_channel(interaction: discord.Interaction, name: str):
+    uid = str(interaction.user.id)
+    team_name = data["teams"].get(uid)
+    if not team_name:
+        return await interaction.response.send_message("No team.", ephemeral=True)
+
+    guild = interaction.guild
+    team_role = discord.utils.get(guild.roles, name=team_name)
+    category = discord.utils.get(guild.categories, name="-----------------")
+    if not category:
+        category = await guild.create_category("-----------------")
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(view_channel=False),
+        team_role: discord.PermissionOverwrite(view_channel=True, connect=True)
+    }
+
+    await guild.create_voice_channel(name, category=category, overwrites=overwrites)
+    await interaction.response.send_message("Voice channel created.", ephemeral=True)
+
 # ========================= BLACKLIST =========================
 @bot.tree.command(name="blacklist")
 @app_commands.checks.has_any_role("Mod", "HEAD MOD")
@@ -191,7 +266,7 @@ async def team_leaderboard(interaction: discord.Interaction):
     await update_team_leaderboard(interaction.guild)
     await interaction.response.send_message("Team leaderboard created.", ephemeral=True)
 
-# ========================= MISSION SYSTEM =========================
+# ========================= MISSION SYSTEM (GLOBAL) =========================
 @bot.tree.command(name="create_mission")
 async def create_mission(
     interaction: discord.Interaction,
@@ -227,14 +302,19 @@ async def create_mission(
     embed.add_field(name="Time", value=time, inline=False)
     embed.set_image(url=avatar)
 
+    sent = False
     for ch in interaction.guild.text_channels:
         if ch.name == "🛡・missions":
             try:
                 if ping:
                     await ch.send(bounty_ping.mention)
                 await ch.send(embed=embed)
+                sent = True
             except:
                 pass
+
+    if not sent:
+        return await interaction.followup.send("No missions channels found.", ephemeral=True)
 
     await interaction.followup.send("Mission sent to all missions channels.", ephemeral=True)
 
