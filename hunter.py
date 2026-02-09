@@ -102,6 +102,73 @@ async def update_team_leaderboard(guild):
 
     await msg.edit(content=text)
 # ----------------
+# ========================= TEAM MANAGEMENT =========================
+
+@bot.tree.command(name="team_remove")
+async def team_remove(interaction: discord.Interaction):
+    """Remove all members from your team but keep the team."""
+    uid = str(interaction.user.id)
+    if uid not in data["teams"]:
+        return await interaction.response.send_message("You are not a team leader.", ephemeral=True)
+
+    team_name = data["teams"][uid]
+    role = discord.utils.get(interaction.guild.roles, name=team_name)
+    if not role:
+        return await interaction.response.send_message("Team role not found.", ephemeral=True)
+
+    for member in role.members:
+        if member != interaction.user:
+            await member.remove_roles(role)
+
+    await interaction.response.send_message(f"All members removed from team **{team_name}**.", ephemeral=True)
+
+
+@bot.tree.command(name="team_delete")
+async def team_delete(interaction: discord.Interaction):
+    """Delete your team entirely."""
+    uid = str(interaction.user.id)
+    if uid not in data["teams"]:
+        return await interaction.response.send_message("You are not a team leader.", ephemeral=True)
+
+    team_name = data["teams"][uid]
+    role = discord.utils.get(interaction.guild.roles, name=team_name)
+    if role:
+        await role.delete()
+
+    # Remove data
+    data["teams"].pop(uid)
+    data["join_requests"].pop(team_name, None)
+    data["invisible_teams"].pop(team_name, None)
+    save_data()
+
+    await interaction.response.send_message(f"Team **{team_name}** has been deleted.", ephemeral=True)
+
+
+@bot.tree.command(name="team_name_change")
+async def team_name_change(interaction: discord.Interaction, new_name: str):
+    """Change your team's name."""
+    uid = str(interaction.user.id)
+    if uid not in data["teams"]:
+        return await interaction.response.send_message("You are not a team leader.", ephemeral=True)
+
+    old_name = data["teams"][uid]
+    if discord.utils.get(interaction.guild.roles, name=new_name):
+        return await interaction.response.send_message("A team with this name already exists.", ephemeral=True)
+
+    role = discord.utils.get(interaction.guild.roles, name=old_name)
+    if role:
+        await role.edit(name=new_name)
+
+    data["teams"][uid] = new_name
+    # Update join_requests key
+    data["join_requests"][new_name] = data["join_requests"].pop(old_name, [])
+    # Update invisible_teams if any
+    if old_name in data["invisible_teams"]:
+        data["invisible_teams"][new_name] = data["invisible_teams"].pop(old_name)
+
+    save_data()
+    await interaction.response.send_message(f"Team name changed from **{old_name}** to **{new_name}**.", ephemeral=True)
+
 # ========================= TEAM CHANNELS =========================
 @bot.tree.command(name="team_channels")
 async def team_channels(interaction: discord.Interaction):
