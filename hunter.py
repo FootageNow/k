@@ -345,7 +345,7 @@ async def create_mission(
     embed.set_image(url=avatar)
 
     sent = False
-    for ch in interaction.guild.text_channels: 
+    for ch in interaction.guild.text_channels:
         if ch.name == "🛡・missions":
             try:
                 if ping:
