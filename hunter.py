@@ -102,7 +102,59 @@ async def update_team_leaderboard(guild):
 
     await msg.edit(content=text)
 # ----------------
+@bot.tree.command(name="blacklist")
+@app_commands.checks.has_any_role("Mod", "HEAD MOD")
+async def blacklist(interaction: discord.Interaction, member: discord.Member):
+    if str(member.id) in data["blacklist_roles"]:
+        return await interaction.response.send_message(
+            "This user is already blacklisted.", ephemeral=True
+        )
+
+    # save current roles (except @everyone)
+    saved_roles = [role.id for role in member.roles if role.name != "@everyone"]
+    data["blacklist_roles"][str(member.id)] = saved_roles
+
+    # remove all roles
+    for role in member.roles:
+        if role.name != "@everyone":
+            await member.remove_roles(role)
+
+    # add blacklist role
+    bl_role = await get_or_create_role(interaction.guild, "blacklist")
+    await member.add_roles(bl_role)
+
+    save_data()
+    await interaction.response.send_message(
+        f"{member.mention} has been blacklisted.", ephemeral=True
+    )
+
 # ========================= TEAM MANAGEMENT =========================
+@bot.tree.command(name="unblacklist")
+@app_commands.checks.has_any_role("Mod", "HEAD MOD")
+async def unblacklist(interaction: discord.Interaction, member: discord.Member):
+    roles_ids = data["blacklist_roles"].get(str(member.id))
+    if not roles_ids:
+        return await interaction.response.send_message(
+            "This user is not blacklisted.", ephemeral=True
+        )
+
+    # remove blacklist role
+    bl_role = discord.utils.get(interaction.guild.roles, name="blacklist")
+    if bl_role:
+        await member.remove_roles(bl_role)
+
+    # restore old roles
+    for rid in roles_ids:
+        role = interaction.guild.get_role(rid)
+        if role:
+            await member.add_roles(role)
+
+    data["blacklist_roles"].pop(str(member.id))
+    save_data()
+
+    await interaction.response.send_message(
+        f"{member.mention} has been unblacklisted.", ephemeral=True
+    )
 
 # ========================= TEAM REMOVE MEMBER =========================
 @bot.tree.command(name="team-remove")
