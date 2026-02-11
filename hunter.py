@@ -225,72 +225,42 @@ async def team_name_change(interaction: discord.Interaction, new_name: str):
     await interaction.response.send_message(f"Team name changed from **{old_name}** to **{new_name}**.", ephemeral=True)
 
 # ========================= TEAM CHANNELS =========================
-@bot.tree.command(name="team-channel")
-async def team_channel(interaction: discord.Interaction):
-    leader_id = str(interaction.user.id)
+@bot.tree.command(name="team_channels")
+async def team_channels(interaction: discord.Interaction):
+    uid = str(interaction.user.id)
 
-    if leader_id not in data["teams"]:
+    if uid not in data["teams"]:
         return await interaction.response.send_message(
             "You are not a team leader.", ephemeral=True
         )
 
-    team_name = data["teams"][leader_id]
+    team_name = data["teams"][uid]
     guild = interaction.guild
 
     team_role = discord.utils.get(guild.roles, name=team_name)
-    leader_role = discord.utils.get(guild.roles, name="TEAM-LEADER")
+    if not team_role:
+        return await interaction.response.send_message(
+            "Team role not found.", ephemeral=True
+        )
 
-    # الصلاحيات
+    # Category TEAMS فقط
+    category = discord.utils.get(guild.categories, name="TEAMS")
+    if not category:
+        category = await guild.create_category("TEAMS")
+
     overwrites = {
         guild.default_role: discord.PermissionOverwrite(view_channel=False),
-        team_role: discord.PermissionOverwrite(view_channel=True),
-        leader_role: discord.PermissionOverwrite(view_channel=True, send_messages=True)
+        team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False),
+        interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True)
     }
 
-    # 🔍 احصل أو أنشئ Category الفريق
-    category = discord.utils.get(guild.categories, name=team_name)
-    if not category:
-        category = await guild.create_category(team_name, overwrites=overwrites)
-    else:
-        await category.edit(overwrites=overwrites)
-
-    # 🧹 احذف القنوات القديمة (إعادة بناء)
-    for ch in category.channels:
-        if ch.name in ["📖〢rules", "📢・announcements", "missions🛡"]:
-            await ch.delete()
-
-    # 📖 rules
-    await guild.create_text_channel(
-        "📖〢rules",
-        category=category,
-        overwrites={
-            **overwrites,
-            team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False)
-        }
-    )
-
-    # 📢 announcements
-    await guild.create_text_channel(
-        "📢・announcements",
-        category=category,
-        overwrites={
-            **overwrites,
-            team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False)
-        }
-    )
-
-    # 🛡 missions
-    await guild.create_text_channel(
-        "missions🛡",
-        category=category,
-        overwrites={
-            **overwrites,
-            team_role: discord.PermissionOverwrite(view_channel=True, send_messages=False)
-        }
-    )
+    # ينشئ القنوات دائماً حتى لو كانت موجودة
+    await guild.create_text_channel("📖〢rules", category=category, overwrites=overwrites)
+    await guild.create_text_channel("📢・announcements", category=category, overwrites=overwrites)
+    await guild.create_text_channel("🛡・missions", category=category, overwrites=overwrites)
 
     await interaction.response.send_message(
-        "Team channels rebuilt successfully.", ephemeral=True
+        "Team channels have been created in **TEAMS**.", ephemeral=True
     )
 
 
